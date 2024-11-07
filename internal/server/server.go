@@ -4,11 +4,23 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
+	"time"
 )
+
+type RedisObject interface {
+	Type() string
+	LastAccess() time.Time
+	Touch()
+	String() string
+	Len() int
+}
 
 type Server struct {
 	addr string
 	port string
+	store map[string]RedisObject
+	mu sync.Mutex
 }
 
 type SetServer func(*Server)
@@ -29,11 +41,24 @@ func New(options ...SetServer) *Server {
 	s := &Server{
 		addr: "localhost",
 		port: "6380",
+		store: make(map[string]RedisObject),
 	}
 	for _, set := range options {
 		set(s)
 	}
 	return s;
+}
+
+func (s *Server) Set(key string, value RedisObject) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.store[key] = value
+}
+
+func (s *Server) Get(key string) RedisObject {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.store[key]
 }
 
 func (s *Server) Start() error {
@@ -56,7 +81,7 @@ func (s *Server) Start() error {
 
 func (s *Server) handleConnection(conn net.Conn) {
     defer conn.Close()
-    handler := NewRESPHandler(conn)
+    handler := NewRESPHandler(conn, s)
     for {
         if err := handler.Handle(); err != nil {
             log.Printf("Error handling connection: %v", err)
